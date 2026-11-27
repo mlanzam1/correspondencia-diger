@@ -567,8 +567,9 @@ async function prepararManual() {
     campo(ob, "fecha_recepcion", "Fecha de recepción", h("input", { type: "date" }), false, true);
     campo(ob, "numero_documento", "Número de documento", h("input", { type: "text", placeholder: "Ej. DM-SEDESOL-1042-2026" }), false, true);
     campo(ob, "remitente", "Remitente (institución)", h("input", { type: "text", list: "m-remitentes", placeholder: "Ej. Secretaría de Desarrollo Social" }), true, true);
+    campo(ob, "procedencia", "Procedencia (de quién viene)", h("input", { type: "text", list: "m-procedencias", placeholder: "Ej. Despacho de la Ministra, Lic. Ana Pérez" }), true);
     campo(ob, "asunto", "Asunto", h("textarea", { rows: 3, placeholder: "De qué trata el oficio" }), true, true);
-    ob.append(h("datalist", { id: "m-remitentes" }));
+    ob.append(h("datalist", { id: "m-remitentes" }), h("datalist", { id: "m-procedencias" }));
     campo(op, "estado", "Estado", h("select", {}, ...ESTADOS.map(e => h("option", { value: e, text: e }))));
     campo(op, "plantilla", "Plantilla del Word (si lo generas)", h("select", {}, ...Object.entries(PLANTILLAS).map(([k, t]) => h("option", { value: k, text: t }))));
     campo(op, "respuesta_seguimiento", "Respuesta o seguimiento", h("input", { type: "text" }), true);
@@ -590,13 +591,14 @@ async function prepararManual() {
   }
   try {
     const docs = M.docs.length ? M.docs : await DB.listDocs();
+    $("#m-procedencias").replaceChildren(...[...new Set(docs.map(d => d.procedencia).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")).map(r => h("option", { value: r })));
     $("#m-remitentes").replaceChildren(...[...new Set(docs.map(remDe).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")).map(r => h("option", { value: r })));
   } catch {}
 }
 
 function limpiarManual(foco) {
   const e = MAN.els;
-  ["numero_documento", "remitente", "asunto", "respuesta_seguimiento", "fecha_respuesta", "texto", "fecha_recepcion"].forEach(k => { e[k].value = ""; e[k].classList.remove("falta"); });
+  ["numero_documento", "remitente", "procedencia", "asunto", "respuesta_seguimiento", "fecha_respuesta", "texto", "fecha_recepcion"].forEach(k => { e[k].value = ""; e[k].classList.remove("falta"); });
   e.estado.value = "En revisión"; e.plantilla.value = "oficio"; e.tipoArch.value = "original"; e.archivo.value = ""; if (MAN.nomArch) MAN.nomArch.textContent = "Ningún archivo elegido";
   $("#m-status").textContent = "";
   if (foco) e.fecha_recepcion.focus();
@@ -618,7 +620,7 @@ async function guardarManual() {
     const val = k => e[k].value.trim() || null;
     const doc = await DB.insertDoc({
       fecha_recepcion: val("fecha_recepcion"), numero_documento: val("numero_documento"),
-      remitente: val("remitente"), institucion: val("remitente"), asunto: val("asunto"), resumen: val("asunto"),
+      remitente: val("remitente"), institucion: val("remitente"), procedencia: val("procedencia"), asunto: val("asunto"), resumen: val("asunto"),
       estado: e.estado.value, plantilla: e.plantilla.value,
       respuesta_seguimiento: val("respuesta_seguimiento"), fecha_respuesta: val("fecha_respuesta"),
       texto: val("texto"), origen_datos: "manual", confidencial: false
@@ -653,6 +655,7 @@ const COLS = [
   { k: "fecha_recepcion", t: "Recepción", cls: "fecha", f: d => fFecha(d.fecha_recepcion) },
   { k: "numero_documento", t: "Número de documento", cls: "num" },
   { k: "remitente", t: "Remitente (institución)", cls: "rem", f: remDe },
+  { k: "procedencia", t: "Procedencia", cls: "rem" },
   { k: "asunto", t: "Asunto", cls: "asunto", f: asuntoDe },
   { k: "estado", t: "Estado" },
   { k: "respuesta_seguimiento", t: "Respuesta o seguimiento", cls: "resp" },
@@ -688,7 +691,7 @@ function estadoDesdeRespuesta(r) {
 }
 
 function leerMatrizVieja(libro) {
-  const claves = { n: null, fecha_recepcion: null, numero_documento: null, remitente: null, asunto: null, respuesta_seguimiento: null, fecha_respuesta: null, estado: null };
+  const claves = { n: null, fecha_recepcion: null, numero_documento: null, remitente: null, procedencia: null, asunto: null, respuesta_seguimiento: null, fecha_respuesta: null, estado: null };
   for (const nombre of libro.SheetNames) {
     const filas = XLSX.utils.sheet_to_json(libro.Sheets[nombre], { header: 1, raw: true, defval: null });
     const iCab = filas.findIndex(f => { const t = f.map(norm).join("|"); return /remitente|institucion/.test(t) && /asunto|resumen/.test(t); });
@@ -701,6 +704,7 @@ function leerMatrizVieja(libro) {
       else if (c.includes("fecha") && c.includes("respuesta")) { if (col.fecha_respuesta === null) col.fecha_respuesta = i; }
       else if (c.includes("fecha")) { if (col.fecha_recepcion === null && !/cambio|firma|sello/.test(c)) col.fecha_recepcion = i; }
       else if (c.includes("numero")) { if (col.numero_documento === null) col.numero_documento = i; }
+      else if (/procedencia|de quien|origen/.test(c)) { if (col.procedencia === null) col.procedencia = i; }
       else if (/remitente|institucion/.test(c)) { if (col.remitente === null) col.remitente = i; }
       else if (c.includes("asunto") || (c.includes("resumen") && col.asunto === null)) { if (col.asunto === null || c.includes("asunto")) col.asunto = i; }
       else if (c.includes("respuesta") || c.includes("seguimiento")) { if (col.respuesta_seguimiento === null) col.respuesta_seguimiento = i; }
@@ -725,7 +729,7 @@ function leerMatrizVieja(libro) {
         fila,
         doc: {
           fecha_recepcion: fr, numero_documento: datos.numero || null,
-          remitente: datos.rem || null, institucion: datos.rem || null,
+          remitente: datos.rem || null, institucion: datos.rem || null, procedencia: textoCelda(g("procedencia")) || null,
           asunto: datos.asunto || null, resumen: datos.asunto || null,
           respuesta_seguimiento: resp || null, fecha_respuesta: frr,
           estado, plantilla: "oficio", origen_datos: "matriz anterior"
@@ -881,6 +885,9 @@ function avisoAlmacen() {
   if (DB.nombre !== "local") return "";
   if (!(window.CONFIG || {}).carpeta) {
     const dias = diasDesdeRespaldo();
+    if (!M.docs.length) return h("div", { class: "aviso bienvenida" },
+      h("div", {}, h("b", { text: "La matriz está vacía en esta dirección." }), h("span", { text: " ¿Ya usabas el sistema en otra dirección o en otra computadora? Elige el respaldo (.zip) que descargaste allá y se cargan todos los documentos con sus archivos." })),
+      h("button", { class: "primary", text: "Restaurar respaldo…", onclick: () => $("#a-restaurar-arch").click() }));
     if (!datosProtegidos) return h("div", { class: "aviso info" }, h("b", { text: "Los datos se guardan en esta PC. " }), "Se conservan al cerrar el navegador, pero se pierden si se borran los datos de navegación. Protégelos y haz respaldos en OneDrive. ", h("button", { class: "primary", text: "Proteger datos", onclick: async () => { await protegerDatos(true); router(); } }), " ", h("button", { text: "Descargar respaldo", onclick: ev => descargarRespaldo(ev.target) }));
     if (M.docs.length && (dias === null || dias >= 7)) return h("div", { class: "aviso info" }, h("b", { text: dias === null ? "Todavía no hay respaldo. " : `Último respaldo hace ${dias} días. ` }), "Descarga un respaldo y guárdalo en OneDrive. ", h("button", { class: "primary", text: "Descargar respaldo", onclick: ev => descargarRespaldo(ev.target) }));
     return "";
@@ -945,6 +952,7 @@ const unicos = k => [...new Set(M.docs.map(d => d[k]).filter(Boolean))].sort((a,
 const FILTROS = [
   { k: "estado", t: "Estado", tipo: "sel", ops: () => ESTADOS, barra: true, prueba: (d, v) => estadoDe(d) === v },
   { k: "remitente", t: "Remitente (institución)", tipo: "sel", ops: () => [...new Set(M.docs.map(remDe).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")), barra: true, prueba: (d, v) => remDe(d) === v },
+  { k: "procedencia", t: "Procedencia", tipo: "sel", ops: () => unicos("procedencia") },
   { k: "plantilla", t: "Plantilla del Word", tipo: "sel", ops: () => Object.entries(PLANTILLAS) },
   { k: "archivo", t: "Archivos", tipo: "sel", ops: () => [["original", "Con original escaneado"], ["transcripcion", "Con Word"], ["revisado", "Con revisado"], ["firmado", "Con firmado"], ["-transcripcion", "Sin Word"], ["-revisado", "Sin revisado"], ["-firmado", "Sin firmar"]],
     prueba: (d, v) => { const tiene = (d.archivos || []).some(a => a.tipo === v.replace("-", "")); return v.startsWith("-") ? !tiene : tiene; } },
@@ -1064,7 +1072,7 @@ function docsFiltrados() {
   const activos = FILTROS.map(f => [f, valorFiltro(f)]).filter(([, v]) => v);
   const { k, dir } = M.orden;
   return M.docs.filter(d => {
-    if (q && !norm([d.n, d.numero_documento, remDe(d), asuntoDe(d), d.respuesta_seguimiento, estadoDe(d), fFecha(d.fecha_recepcion), fFecha(d.fecha_respuesta)].join(" ")).includes(q)) return false;
+    if (q && !norm([d.n, d.numero_documento, remDe(d), d.procedencia, asuntoDe(d), d.respuesta_seguimiento, estadoDe(d), fFecha(d.fecha_recepcion), fFecha(d.fecha_respuesta)].join(" ")).includes(q)) return false;
     return activos.every(([f, v]) => {
       if (f.prueba) return f.prueba(d, v);
       if (f.tipo === "sel") return String(d[f.k] ?? "") === v;
@@ -1141,12 +1149,12 @@ function pintarTabla() {
 
 function libroMatriz(docs) {
   const C = window.CONFIG || {};
-  const enc = ["N°", "FECHA DE RECEPCIÓN", "NÚMERO DE DOCUMENTO", "REMITENTE", "ASUNTO", "ESTADO", "RESPUESTA O SEGUIMIENTO", "FECHA DE RESPUESTA"];
-  const filas = docs.map(d => [d.n, fFecha(d.fecha_recepcion), d.numero_documento || "", remDe(d), asuntoDe(d), estadoDe(d), d.respuesta_seguimiento || "", fFecha(d.fecha_respuesta)]);
+  const enc = ["N°", "FECHA DE RECEPCIÓN", "NÚMERO DE DOCUMENTO", "REMITENTE", "PROCEDENCIA", "ASUNTO", "ESTADO", "RESPUESTA O SEGUIMIENTO", "FECHA DE RESPUESTA"];
+  const filas = docs.map(d => [d.n, fFecha(d.fecha_recepcion), d.numero_documento || "", remDe(d), d.procedencia || "", asuntoDe(d), estadoDe(d), d.respuesta_seguimiento || "", fFecha(d.fecha_respuesta)]);
   const aoa = [[C.institucion || "DIRECCIÓN DE GESTIÓN POR RESULTADOS"], [C.area || "DESPACHO MINISTERIAL"], [C.titulo || "GESTIÓN DE CORRESPONDENCIA"], enc, ...filas];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   ws["!merges"] = [0, 1, 2].map(r => ({ s: { r, c: 0 }, e: { r, c: enc.length - 1 } }));
-  ws["!cols"] = [6, 14, 24, 40, 70, 16, 40, 14].map(w => ({ wch: w }));
+  ws["!cols"] = [6, 14, 24, 40, 32, 70, 16, 40, 14].map(w => ({ wch: w }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Hoja1");
   return wb;
@@ -1160,6 +1168,7 @@ const CAMPOS = [
   { k: "numero_documento", t: "Número de documento", cls: "num" },
   { k: "fecha_recepcion", t: "Fecha de recepción", tipo: "date" },
   { k: "remitente", t: "Remitente (institución)", full: true },
+  { k: "procedencia", t: "Procedencia (de quién viene)", full: true },
   { k: "asunto", t: "Asunto", tipo: "area", full: true },
   { k: "estado", t: "Estado", tipo: "estado" },
   { k: "plantilla", t: "Plantilla del Word (si lo generas)", tipo: "plantilla" },
